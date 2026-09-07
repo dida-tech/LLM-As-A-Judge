@@ -1,0 +1,1574 @@
+Limits to scalable evaluation at the frontier:
+
+LLM as Judge won’t beat twice the data
+
+Florian E. Dorner
+††thanks: Corresponding author: florian.dorner@tuebingen.mpg.de
+Affiliation: Max Planck Institute for Intelligent Systems, Tübingen
+
+Affiliation: Tübingen AI Center
+
+Affiliation: ETH Zürich
+
+Vivian Y. Nastl
+
+Affiliation: Max Planck Institute for Intelligent Systems, Tübingen
+
+Affiliation: Tübingen AI Center
+
+Affiliation: ETH Zürich
+
+Moritz Hardt
+
+Affiliation: Max Planck Institute for Intelligent Systems, Tübingen
+
+Affiliation: Tübingen AI Center
+
+Abstract
+
+High quality annotations are increasingly a bottleneck in the explosively growing machine learning ecosystem. Scalable evaluation methods that avoid costly annotation have therefore become an important research ambition. Many hope to use strong existing models in lieu of costly labels to provide cheap model evaluations. Unfortunately, this method of using models as judges introduces biases, such as self-preferencing, that can distort model comparisons. An emerging family of debiasing tools promises to fix these issues by using a few high quality labels to debias a large number of model judgments. In this paper, we study how far such debiasing methods, in principle, can go. Our main result shows that when the judge is no more accurate than the evaluated model, no debiasing method can decrease the required amount of ground truth labels by more than half. Our result speaks to the severe limitations of the LLM-as-a-judge paradigm at the evaluation frontier where the goal is to assess newly released models that are possibly better than the judge. Through an empirical evaluation, we demonstrate that the sample size savings achievable in practice are even more modest than what our theoretical limit suggests. Along the way, our work provides new observations about debiasing methods for model evaluation, and points out promising avenues for future work.
+
+1 Introduction
+
+As large models continue to advance in their capabilities, it is increasingly challenging for human experts to evaluate newly released models. Expert data annotation is not only slow and costly. Traditional benchmarking also struggles to keep up with rapidly changing model capabilities across an expanding range of tasks. Yet, as models become more powerful, there is hope that models themselves could become powerful tools for scaling up evaluation. An intriguing idea is to use a strong existing model to provide judgments about other models. Such a “model-as-judge” could provide labels to classification instances, compare model outputs, and replace human annotators across a variety of tasks.
+
+Already implemented in practice in numerous instances, the model-as-judge paradigm, however, runs into some roadblocks. When used as judges, models exhibit a range of biases that can skew model comparisons and result in misleading model rankings. Recently proposed debiasing methods, however, promise a compelling way forward. Using a small number of ground truth labels, these methods can potentially debias a large number of model predictions, thus restoring their utility for benchmarking purposes.
+
+Scalable evaluation is most needed—and most challenging—at the evaluation frontier: Newly released models for which we have little intuition as of yet. What makes this case so challenging is that the new model is likely better than the judge in some ways. In this work, we address the question whether debiasing methods together with the model-as-judge paradigm can, in principle, provide an adequate solution to scalable evaluation at the frontier. However, our theory, supported by empirical evaluation, makes a sobering prediction: Whenever the judge model performs worse at its task than the evaluated model, the optimal debiasing method is no better than using twice the ground truth data.
+This shows that, although there is merit to debiasing, at the evaluation frontier its economic gains are not greater than a factor-two savings in annotation cost.
+
+1.1 Our contributions
+
+In our theoretical work we focus on a standard
+evaluation setup that encompasses classification, question answering, arena-style comparisons, and safety evaluations. Given an input , a model  produces an output  that receives a binary ground-truth score .
+For example, in classification the accuracy score  is  if the model’s output  matches the ground-truth label  and  otherwise. A judge model provides a binary proxy score . We imagine that obtaining ground-truth scores is costly and proxy scores are significantly cheaper.
+
+For a fixed model , our goal is to estimate its true score  where the expectation is taken over an input drawn from a distribution. However due to judge bias, simply using cheap proxy scores  can lead to substantially distorted estimates. To motivate the issue, Figure 1 shows how proxy scores can cause highly misleading rankings of model performance.
+
+(a) GPT-4 as judge (84% accuracy).
+
+(b) LLaMa3-70b as judge (79% accuracy).
+
+Figure 1: Model ranks on MMLU based on true labels compared to LLM labels in a semi-synthetic setting (a) and for the top-10 models on HELM by July 2024 (b). Using LLM labels heavily perturbs the ranking despite high judge accuracy.
+
+Rather than solely relying on proxy scores, we assume that we have a small number  of ground-truth scores  sampled IID, in addition to a larger number  of proxy scores . A debiasing method is any estimator that provides an unbiased estimate of the true score from the sample of available proxy scores and ground truth scores. In particular, debiasing methods guarantee that ranking models by their estimated performance produces correct model rankings with high probability.
+
+We focus on sample size savings in terms of the ground-truth scores  that debiasing methods can achieve by making use of the proxy scores .
+
+•
+
+We first show that the best possible savings are determined by the Pearson correlation between  and  (Theorem 5).
+
+•
+
+Our main result (Theorem 6) then shows that this correlation is small whenever the judge model performs worse than the evaluated model. In that case the best possible outcome is an effective doubling of the number of samples , no matter how many samples of the proxy score  are available (Corollary 7). This result remains true in a slightly weaker sense, when we allow for the proxy  to be continuous rather than binary (Theorem 10).
+
+•
+
+In experiments on MMLU and MT-Bench, we empirically confirm that sample size savings of more than a factor two are rare: We only observe them when current state-of-the-art models are used to judge substantially weaker models.
+
+In addition, we show that the commonly reported agreement rate between the judge and the ground truth neither meaningfully restricts the judge bias, nor the sample size savings for debiasing methods.
+
+2 Formal setup and motivation
+
+In this section,
+we introduce the formal model we use to analyze the model-as-judge paradigm. We then provide empirical and theoretical evidence that judge bias can indeed cause model-as-judge to produce misleading results,
+even when judge models are quite accurate.
+
+We focus our analysis on aggregated binary evaluations:
+Given a prompt , a model  receives a binary score  depending on its output . As both model outputs and evaluation protocols can be non-deterministic, we treat  as a random variable, even when the prompt  and model output  are fixed. The model  is then evaluated based on its expected score . Here, the expectation is taken over the prompt distribution , as well as additional randomness in the scores  introduced by the evaluation protocol.
+
+This setup covers several important benchmarking and evaluation settings:
+
+•
+
+Accuracy in classification and Q&A benchmarks: Here, the prompt  is an instance to be classified or a question to be answered. Letting  denote the model’s output on input  the accuracy score  equals one whenever  equals the label .
+
+•
+
+Arena-style benchmarks: In this setting  is a prompt. We sample the model’s response  and the response  of another randomly selected model . The score  indicates whether  was judged to be a better response than .
+
+•
+
+Safety benchmarks:
+For this, the prompt  is designed to potentially elicit unsafe behaviour. The score  indicates whether the model’s response  is safe.
+
+In each of these settings, we can use a language model as a judge model to score models more cheaply than via ground truth evaluation. To do so, we compute a proxy score  with the help of the judge model. We assume that the proxy score is binary as well. In the classification setting, for example, the judge models could provide the labels for evaluation. The proxy score would then be the classification accuracy with respect to the judge model’s labels. In arena comparisons, the LLM could replace human raters. And in safety benchmarks, an LLM could evaluate the safety of model outputs. Although our motivation focuses on language models as the source of proxy scores, our formal work applies to any proxy score, e.g., scores provided by crowdworkers rather than experts.
+
+Precisely modeling the specific relationship between ,  and  is generally infeasible: Even in the simplest case of classification, this would require a precise formal model of not just the judge’s prediction , but also the relationship between  and the correct labels . We therefore treat the scoring functions  and  as black boxes, as is standard, and focus on the joint distribution of the two induced random variables  and .
+
+As both scores  and  are binary, we only require three parameters to specify their joint distribution:
+
+ |
+ |
+ |
+ |
+
+ |
+ |
+ |
+ |
+
+ |
+ |
+ |
+ |
+
+Here, the parameter  represents the model’s expected real score , while  represents the probability that the evaluations  and  match, conditional on the score  being equal to one (i.e., the true positive rate). Similarly,  represents the probability of  conditional on  (i.e., the true negative rate).
+
+2.1 Judge bias can strongly perturb model rankings
+
+We argue that estimating the expected proxy score  instead of the real expected score  is problematic for benchmarking.
+In the spirit of Salaudeen and Hardt (2024),
+a benchmark has two purposes:
+quantifying model performance and ranking models. In turn, a useful LLM judge should accurately estimate each model’s performance, and induce the same ranking of evaluated models as the ground truth.
+For the first goal, the main quantity of interest is
+the judge bias, defined as
+
+ |
+ |
+ |
+
+Whenever  has large magnitude, the proxy score  misrepresents the performance  of model , even with large sample sizes.
+
+When it comes to ranking models, the relationship between judge bias  and model rankings is more subtle: If the judge bias  was constant across all models, rankings would be unaffected. However,  can strongly depend on the evaluated model .
+If  is positive for models with low performance, and negative for better performing models, using the score of the judge  can easily perturb model rankings. Our next proposition provides such an example inspired by empirical work. Specifically, real-world classifiers are not only highly similar to each other (Mania et al., 2019), Mania and Sra (2020) also observe that when one classifier is better than another on real data, it tends to be strictly better in a point-wise sense, for the most part. We therefore consider using a classifier  to evaluate a set  of strictly better classifiers. In that case, using the proxy evaluations  based on  fully reverses the correct model ranking:
+
+Proposition 1.
+
+Consider a binary classifier  and a set of strictly better binary classifiers  such that  implies  for all . Let  represent the accuracy of model  evaluated on the correct labels, and  its accuracy evaluated on predictions of model .
+Then for ,  implies .
+
+We prove Proposition 1 in Appendix C.6.
+An illustration is provided in Figure 1(a).
+We use GPT-4 labels to evaluate Claude-Sonnet, as well as a set of (fictitious) models on MMLU (Hendrycks et al., 2021). The fictitious models are denoted as “Claude-Sonnet + ” and designed to be strictly better than Claude. This is done by changing wrong predictions of Claude into correct ones until accuracy is improved by . Figure 1(b) shows a more realistic setting, with LLaMa3-70b judging the top-10 MMLU models according to HELM (Liang et al., 2023). While the ranking is not fully reversed, it is strongly perturbed. This effect can also be observed in prior work: For MT-Bench, the ranking of the best models is not consistently preserved when using LLM judges (Zheng et al., 2024).
+
+2.2 High agreement rate is insufficient for evaluation
+
+The results from the previous subsection might appear surprising, considering the strong performance of the judge models: LLaMa3-70b has  accuracy on MMLU, while GPT-4 has , and the models used in MT-Bench have  agreement with expert annotators. Our next proposition explains how it is possible for model rankings to be strongly perturbed despite accurate judges. Before stating it, we need to formally define the agreement  between score  and proxy score  as
+
+ |
+ |
+ |
+
+In the classification setting, the judge model’s accuracy lower bounds the agreement : Clearly  whenever the judge model  is correct. But when there are more than two classes, we also get  whenever the true label  and the predictions  and  are all different from each other. In particular, this highlights that the agreement  can indeed depend on the evaluated model ,
+rather than just the judge . For binary classification, however, the agreement rate equals the judge model’s accuracy and is thus constant across evaluated models. Our next proposition now relates judge bias to agreement:
+
+Proposition 2.
+
+Fix any model score . Then for any  with  there are values of  and , such that  and we obtain positive judge bias . Similarly, for any  with  there are values of  and , such that  and we obtain negative judge bias .
+
+Proposition 2 shows that for agreement , there can be a judge bias of  in either direction. This means that even if  was constant across models , we could only reliably rank models for which the true score  differs by more than . As it is common for state-of-the-art models to differ in performance by only low single digit percentages, without further assumptions an agreement rate above  (for each evaluated model!) would be required to ensure (asymptotically) correct rankings. For a proof, see Appendix C.7.
+
+3 Debiasing LLM judgments
+
+In the previous section, we demonstrated how biased LLM judges can lead to strongly perturbed model rankings. This motivates the need for debiasing methods.
+We begin this section by discussing a simple sufficient condition to guarantee asymptotically correct rankings: Ensure that our estimates of  are unbiased for all models . Statistical bias correction methods can make use of a large number of proxy scores and a smaller number of gold standard labels to construct an unbiased estimator. We discuss one such method in detail, and show that it is essentially optimal in terms of estimator variance. Afterwards we prove our main result, i.e., that LLM judges offer limited benefits for evaluating state-of-the-art models.
+
+3.1 Uniformly controlling judge bias ensures correct rankings
+
+We begin with a simple and natural sufficient condition for correct rankings. This is that all model evaluations are approximately unbiased. The next proposition shows that this, in fact, entails correct rankings in expectation and hence also with a sufficient amount of data.
+
+Proposition 3.
+
+Let  be a finite set of models such that for any
+
+ |
+ |
+ |
+
+Let  be an estimator for  such that  converges to zero in the dataset size. Then if  for all models , using  to rank models yields the correct ranking with high probability.
+
+Proof.
+
+By construction,  induces the same model rankings as . Chebyshev’s inequality and a union bound imply correct rankings as  goes to zero.
+∎
+
+Proposition 3 implies that if we could guarantee sufficiently small estimator bias,
+a large amount of proxy samples  would yield correct rankings with high probability. However, it is important for
+bias to be small
+for all evaluated models. In light of the worst-case results from Proposition 2, we cannot rely on this to be true when solely basing our estimates on the proxy scores .
+
+3.2 Background on Prediction Powered Inference
+
+We next discuss how to leverage a small amount of ground truth samples  to debias the proxy scores . This yields an unbiased estimator  for , and thus asymptotically correct model rankings.
+
+Specifically, we follow the Prediction Powered Inference (PPI) framework (Angelopoulos et al., 2023a) and a method by Chaganty et al. (2018) that is equivalent in our case: Alongside a large IID sample of model judgments  for integer , we assume access to the corresponding ground truth label  for a small subset of integer . With this, we can construct an unbiased estimator  for  by using the small parallel sample to estimate , and subtracting it from our estimate of .
+The PPI estimator thus equals
+
+ |
+ |
+ |
+
+Clearly, the PPI estimator is unbiased
+
+ |
+ |
+ |
+
+and has variance
+
+ |
+ |
+ |
+
+Whenever , the first term on the right hand side is small. Moreover, when  and  are strongly correlated, the second term is small. Assuming both, we have , where
+ is the ground-truth sample average estimator
+
+However if the correlation between  and  is small, the inequality is reversed. This issue can be fixed by interpolating between the PPI estimator and the classical estimator (Chaganty et al., 2018; Angelopoulos et al., 2023b), setting
+
+ |
+ |
+ |
+
+As a linear combination of unbiased estimators this remains unbiased, but we can now optimize over  to minimize estimator variance. We obtain the optimum value
+At this , the estimator never increases variance compared to the classical ground truth estimator:
+
+ |
+ |
+ |
+
+In the following subsection, we discuss to what extent the PPI estimator  can reduce variance or equivalently improve sample efficiency, compared to the ground truth estimator .
+
+3.3 The sample efficiency factor
+
+As the variance of  scales as , using an estimator  with  is equivalent to increasing the ground-truth sample size by a factor of
+
+ |
+ |
+ |
+
+We call  the sample efficiency factor of the estimator . It is our main quantity of interest. In order to ensure it is well-defined, we assume  for the remainder of the text. Our next proposition provides an upper bound on the sample efficiency factor  of PPI, based on the squared Pearson correlation between  and :
+
+Proposition 4.
+
+The sample efficiency factor for the PPI estimator is upper bounded by
+
+ |
+ |
+ |
+
+where
+
+ |
+ |
+ |
+
+This upper bound is large whenever  is large. However, the sample efficiency factor  is finite unless we have perfect correlation . For any correlation bounded away from , the proxy samples can only provide a constant factor improvement. Scaling them up without also scaling the number of ground truth samples has limited benefits.
+The proof can be found in Appendix C.8.
+
+3.4 PPI is near-optimal for non-adaptive binary evaluation
+
+The limited sample efficiency gains of PPI compared to the classical estimator raise the question whether we can find an unbiased estimator with lower variance. Given black-box estimators that do not model the prompt-conditional distribution  and access to  IID samples of proxy scores  and  IID parallel samples  we show that
+the answer is no:
+
+Theorem 5.
+
+Let  be the set of all unbiased estimators for  that observe  joint IID samples  and  IID proxy samples  independent of the joint samples. Then, any
+fulfills the variance bound
+
+ |
+ |
+ |
+
+This means that
+the sample efficiency factor of  is bounded by
+
+ |
+ |
+ |
+
+Theorem 5 follows from an application of the Cramér-Rao bound, combined with extensive algebraic manipulation that was assisted by a computer algebra system. Appendix C.1 has the details.
+
+3.5 Limited gains for evaluating state-of-the-art models
+
+With Theorem 5 at hand, we can analyze the best sample efficiency factor  an unbiased estimator with access to a random sample of  ground truth scores  can achieve by making use of model judgments . In this subsection, we focus on the evaluation of frontier models that outperform older models, including the models used to judge them. We use the evaluated model’s score  and the judge’s agreement rate  as indicators for the respective model’s capabilities. We focus on tasks for which performing and judging the task are of similar difficulty, such that these indicators are comparable. As a prime example, for binary classification,  equals the judge’s accuracy, while  equals the evaluated model’s accuracy.
+
+We thus capture the evaluation of frontier models with the assumption that the evaluated model’s score  is larger than the judge’s agreement rate . The next theorem shows that the squared correlation  is at most one half in this setting.
+
+Theorem 6.
+
+Assume . Then,
+
+ |
+ |
+ |
+
+We prove Theorem 6 in Appendix C.2. Combining Theorem 6 with Theorem 5 allows us to bound the sample efficiency gains that any unbiased estimator can achieve for evaluating frontier models:
+
+Corollary 7.
+
+Assume .
+Then,
+
+ |
+ |
+ |
+
+Corollary 7 implies that when evaluating state-of-the-art models, the best we can expect from using LLM judges is a factor-two improvement in sample efficiency. This is unless the judge’s task is substantially easier than the evaluated model’s task.
+
+3.6 High agreement rate is insufficient for sample efficiency gains
+
+Theorem 6 holds for arbitrarily high levels of agreement. Therefore, the theorem shows that high agreement rates are not just insufficient for avoiding judge bias—they’re also insufficient for obtaining a meaningful sample efficiency factor . Our next proposition goes
+a step further and shows that the agreement  does not provide any lower bound on the sample efficiency factor , even when the judge bias  is zero.
+
+Proposition 8.
+
+For any agreement rate , there exist values of  such that
+
+ |
+ |
+ |
+
+We prove the proposition in Appendix C.9. It implies that in some cases despite access to , no unbiased estimator has less variance than . It might be surprising that there are cases in which we cannot make productive use of the proxy evaluations  despite zero judge bias. However, without further assumptions,  can vary wildly between models, so that we cannot skip estimating it anew for each model.
+Now, even if  has zero judge bias, the estimator does not “know” that, but rather has to estimate  from joint observations . In the configuration from the proposition, estimating the judge bias  turns out
+as hard as directly estimating the real score .
+
+3.7 Experiments
+
+So far, we have shown
+that even optimal debiasing yields limited sample efficiency gains at the frontier (Section 3). In this section, we have a more detailed look into the sample efficiency gains on popular benchmarks that can be achieved by using current flagship models as judges.
+
+Our experiments in this section focus on two settings: Multiple-choice question answering on MMLU (Hendrycks et al., 2021) and chatbot evaluation on MT-Bench (Zheng et al., 2024). Additional experiments on TruthfulQA can be found in Appendix B.2. In all cases, we calculate the empirical correlation  between the score  and the proxy  to obtain and plot an upper bound for the sample efficiency factor  based on Theorem 5.
+
+We first focus on
+MMLU, a multiple-choice question answering benchmark for
+the world knowledge of language models. We obtain model predictions from the HELM (Liang et al., 2023) leaderboard. We then aggregate all subtasks of MMLU into a single test set and set  to equal the accuracy score .
+Here  is the indicator function,  is the model’s answer and  is the correct answer. For model-based evaluations using  as a judge, we replace the correct answer  by the judge’s prediction , setting .
+
+Figure 2: Best possible sample efficiency factor  according to Theorem 5, using different judges (colors) evaluating different models (x-ticks) on MMLU. Error bars show  confidence intervals. Sample efficiency gains stay below two, unless SOTA models are used to evaluate weak models.
+
+In the second setting, we evaluate model performance on MT-Bench, an arena-style benchmark designed to evaluate the ability of models to follow instructions.
+The benchmark comes with results for six models. For each pair of these models  and , both models are queried with the same prompt . The test set for each model  then consists of all triples of the form , for other models in the benchmark  and prompts . For each triple in the test set, an expert evaluator decides, whether model  produced a better response than . In that case, the score  for model  is one, otherwise it is zero.  For the proxy score  we replace the expert’s answer by the GPT-4 response provided by Zheng et al. (2024). For more details, consider Appendix B.
+
+Figure 3: Best possible sample efficiency factor  according to Theorem 5, using GPT-4-as-a-Judge, evaluating different models on MT-Bench. Error bars show  confidence intervals. Sample efficiency gets close to two in some cases, but consistently stays below that value.
+
+Figures 2 and 3 show the optimal sample efficiency factor  on MMLU and MT-Bench respectively.
+The sample efficiency factor  consistently stays below the value of two suggested by Corollary 7, except when current flagship models are used to judge the significantly worse LLama2-7b on MMLU. This exception is not surprising, as in that case  such that the assumptions for Corollary 7 are heavily violated. Interestingly,  stays below two in all other cases, even when stronger models like GPT-4 are used to evaluate weaker models like LLaMa3-70b.
+This suggests that the upper bound on
+ from Corollary 7 is fairly robust.
+We also note that  is often substantially smaller than two, especially on MMLU. This highlights that Corollary 7 provides a best-case upper bound rather than a guarantee that  will be close to two in practice.
+
+4 Going beyond binary evaluation
+
+So far we have assumed the proxy score  to be binary. In this section, we relax this assumption. By not forcing the judge to fully commit to a single answer, we hope to obtain a more useful proxy . For example, in a Q&A task, we can make use of the uncertainty of a judge model  by setting  equal to the probability the judge  assigned to the model answer .
+
+In terms of analysis, the non-parametric joint likelihood of  resulting from non-binary proxies makes it exceedingly hard to prove an analogue of Theorem 5 for all unbiased estimators.
+Instead, we focus on the PPI estimator, . It is a natural choice of estimator, given its proven optimality in the special case of binary proxies . In order to state a condition similar to  from Theorem 6, we assume the proxy  to be bounded in  and define the soft agreement as
+
+ |
+ |
+ |
+
+For binary scores , the soft agreement  simply reduces to the agreement .
+For non-binary proxy scores , we interpret them as probability estimates, such that  equals the estimated probability of the real score .
+To make this interpretation valid, we focus on the recalibrated proxy . The following proposition suggests a way to generalize the condition :
+
+Proposition 9.
+
+Assume that . Then for any , and any binary proxy  such that  and , the recalibrated proxy  fulfills .
+
+For ,
+Proposition 9 states that if the agreement  of a binary proxy  is below the evaluated model’s accuracy , the same is true for the soft accuracy  of the recalibrated proxy . Based on this, we use  to generalize the condition  from Theorem 6, and prove:
+
+Theorem 10.
+
+For any non-constant proxy score  with , we have . Correspondingly, the sample efficiency of PPI is bounded: .
+
+We prove Proposition 9 and Theorem 10 in Appendices C.3 and C.4. Beyond generalizing to soft accuracy, these results also allow us to bound the sample efficiency factor in the binary case as  whenever the judge makes only  times as many errors as the evaluated model .
+
+Experiments on MMLU
+
+Using the prompt format from HELM, we extract LLama3.1-405b’s next-token predictions  for all questions  in MMLU. From these, we take the probabilities  corresponding to the four tokens  representing the answers to question . We then renormalize them to  and define the proxy score  as the probability  assigned to the evaluated model’s answer , as described above.
+
+Figure 4 shows the sample efficiency factor  for PPI in the limit of infinite unlabeled data . As expected, using the non-binary proxy consistently improves sample efficiency. However, as suggested by Theorem 10, the sample efficiency factor  remains below two when we use LLama3.1-405b to evaluate the stronger Claude 3.5 Sonnet. As in the previous experiments, the same is true for evaluating slightly weaker models such as GPT-4 or Gemini 1.5 Pro. This shows that our main claim of “no sample efficiency gains of more than a factor two at the frontier” is robust. That said, unlike in the binary case, the factor two is already (slightly) exceeded for LLaMa3-70b (which is 5% less accurate than LLama3.1-405b), rather than just for the much weaker LLama2-7b.
+
+Figure 4:
+Sample efficiency factor  for PPI in the  limit,
+using LLama3.1-405b-as-Judge on MMLU, with binary and non-binary scores. Error bars:  confidence intervals. Non-binary scores improve the sample efficiency factor , but it stays below two at the frontier.
+
+5 Related work
+
+LLM-as-a-Judge.
+
+With the success of large transformer-based language models, the idea of using model predictions to provide feedback for another model has become very popular. Initially, specialized fine-tuned models were used to provide training signals for a second model (Ouyang et al., 2022; Bai et al., 2022; Dorner et al., 2023). The approach was quickly expanded to using general purpose LLMs like GPT-4 (Achiam et al., 2023), not just for providing training signal but also for evaluating other models. This new paradigm, dubbed LLM-as-a-Judge, has been applied to evaluate a variety of model capabilities (Yu et al., 2023; Chiang and Lee, 2023; Fu et al., 2023; Li et al., 2024; Weyssow et al., 2024; Raju et al., 2024; Vu et al., 2024; Kumar et al., 2024). In some cases, not just the ratings, but also the prompts given to evaluated models are designed by LLMs (Bai et al., 2024). LLM-as-a-Judge is often paired with another emerging paradigm for model evaluation: As generative tasks often do not have a single correct answer, models are evaluated in so-called arena benchmarks (Chiang et al., 2024), where different models’ responses to the same prompts are ranked to determine the best model. Beyond evaluating models, LLM judges have also been employed to evaluate red-teaming (Mazeika et al., 2024) and jailbreaks (Souly et al., 2024). The use of LLM judges rather than experts or crowd workers is often justified by high agreement rates (Gilardi et al., 2023; Zheng et al., 2024) between both types of judges. However, Thakur et al. (2024) find that seemingly high agreement does not necessarily imply accurate judge scores. In this work, we provide a theoretical justification for that finding and show that agreement is not necessarily a good indicator of judge quality, even when judge scores are debiased via PPI.
+
+Bias in LLM judges.
+
+LLM judges can be biased in numerous ways, making their evaluations unreliable: Their outputs often correlate poorly with expert annotations (Bavaresco et al., 2024; Koo et al., 2023). Models are known to rate their own outputs more favorably than the outputs of other models (Liu et al., 2023; Panickssery et al., 2024), prefer longer outputs and outputs containing lists, regardless of quality (Dubois et al., 2024b; Wei et al., 2024). They also exhibit choice-order bias (Dominguez-Olmedo et al., 2023; Wang et al., 2023; Shi et al., 2024) as well as a variety of other biases (Koo et al., 2023).
+While correcting for these known biases (Dubois et al., 2024a; Zheng et al., 2024) is an important first step, manually enumerating and correcting for all judge biases appears infeasible. As one potential alternative, Jung et al. (2024) propose to combat judge bias by having judges abstain based on their confidence. However, if abstention correlates with the evaluated model’s performance, this approach can introduce its own biases to model evaluations.
+
+Debiasing methods.
+
+Usually, the biases listed above are found by identifying patterns in how LLM judgments deviate from (a smaller set of) ground truth labels. Instead of trying to identify and fix specific biases, another line of work uses ground truth labels to directly estimate the bias an LLM judge introduces and correct for it. This approach was already suggested by Chaganty et al. (2018) for debiasing classic automated NLP metrics like BLEU (Papineni et al., 2002) and ROUGE (Lin and Och, 2004). The authors find that their method, which is essentially equivalent to PPI, only improved data efficiency by around  using 2018’s automated metrics. In addition, they show that their method has optimal worst-case variance. In comparison to their worst-case result, our Theorem 5 shows that is always optimal in our binary evaluation setting.
+
+For modern LLM-based metrics, using PPI has been suggested by Boyeau et al. (2024) and Chatzi et al. (2024), and applied as part of more complicated evaluation pipelines (Saad-Falcon et al., 2023; Tyser et al., 2024). Furthermore, Fisch et al. (2024) combine PPI with stratified sampling for model evaluation. These works consistently show that PPI improves efficiency in terms of ground truth labels, but gains in effective sample size rarely exceed  and are always below . Our upper bounds on the sample efficiency factor  show that gains larger than that are indeed unlikely, especially when evaluating state-of-the-art models.
+
+6 Discussion
+
+Our results show that for evaluating frontier models, LLM judges might fall short of the promise of largely replacing expert labelers: While doubling the effective sample size can be useful for practitioners, the order of magnitude of required ground truth labels remains the same with and without access to LLM judges. That said, there are ways to circumvent our negative results:
+
+First, our results pertain to uniform sampling rather than more sophisticated sampling strategies. Approaches like stratified PPI (Fisch et al., 2024) might be able to obtain a somewhat better sample efficiency factor, for example by breaking the assumptions of Theorem 6 per-stratum. That said, Theorem 5 still applies per-stratum. Empirical results presented in Appendix B.3 suggest that at the frontier, stratified PPI rarely improves sample efficiency by more than a factor of two, compared to standard stratified sampling.
+Second, Theorem 6 only holds if the proxy  is less capable at predicting  than the evaluated model  is at its task. Thus, for tasks in which evaluation is substantially easier than the task itself, or tasks for which data to train a specialized evaluator is abundant, gains in sample efficiency of more than a factor two are possible even when evaluating models at the frontier. In addition, weaker models might find their way into many applications due to cost saving reasons, such that efficient evaluations of these models are still valuable.
+
+Finally, we would like to reiterate that our results do not only apply to LLM judges, but any form of biased evaluators including (poorly instructed) crowdworkers. Whenever the crowdworker majority does not consistently agree with the desired ground truth labels, bias correction is required for valid evaluation results. Similarly, if the crowdworker majority vote is less accurate than the evaluated model, Theorem 6 implies that crowdworker labels are of low value compared to ground truth labels.
+
+7 Acknowledgements
+
+We would like to thank Anastasios Angelopoulos, Amin Charusaie, Yatong Chen, André Cruz and Guanhua Zhang for helpful discussions and/or feedback on draft versions of this work. Florian Dorner and Vivian Nastl are grateful for financial support from the Max Planck ETH Center for Learning Systems (CLS).
+
+References
+
+Achiam et al. (2023)
+J. Achiam, S. Adler, S. Agarwal, L. Ahmad, I. Akkaya, F. L. Aleman, D. Almeida, J. Altenschmidt, S. Altman, S. Anadkat, et al.
+
+Gpt-4 technical report.
+
+arXiv preprint arXiv:2303.08774.
+
+Cited by: §5.
+
+Angelopoulos et al. (2023a)
+A. N. Angelopoulos, S. Bates, C. Fannjiang, M. I. Jordan, and T. Zrnic
+
+Prediction-powered inference.
+
+Science 382 (6671), pp. 669–674.
+
+Cited by: §3.2.
+
+Angelopoulos et al. (2023b)
+A. N. Angelopoulos, J. C. Duchi, and T. Zrnic
+
+PPI++: efficient prediction-powered inference.
+
+arXiv preprint arXiv:2311.01453.
+
+Cited by: §3.2.
+
+Bai et al. (2022)
+Y. Bai, A. Jones, K. Ndousse, A. Askell, A. Chen, N. DasSarma, D. Drain, S. Fort, D. Ganguli, T. Henighan, et al.
+
+Training a helpful and harmless assistant with reinforcement learning from human feedback.
+
+arXiv preprint arXiv:2204.05862.
+
+Cited by: §5.
+
+Bai et al. (2024)
+Y. Bai, J. Ying, Y. Cao, X. Lv, Y. He, X. Wang, J. Yu, K. Zeng, Y. Xiao, H. Lyu, et al.
+
+Benchmarking foundation models with language-model-as-an-examiner.
+
+Advances in Neural Information Processing Systems 36.
+
+Cited by: §5.
+
+Bavaresco et al. (2024)
+A. Bavaresco, R. Bernardi, L. Bertolazzi, D. Elliott, R. Fernández, A. Gatt, E. Ghaleb, M. Giulianelli, M. Hanna, A. Koller, et al.
+
+LLMs instead of human judges? a large scale empirical study across 20 nlp evaluation tasks.
+
+arXiv preprint arXiv:2406.18403.
+
+Cited by: §5.
+
+Boyeau et al. (2024)
+P. Boyeau, A. N. Angelopoulos, N. Yosef, J. Malik, and M. I. Jordan
+
+AutoEval done right: using synthetic data for model evaluation.
+
+arXiv preprint arXiv:2403.07008.
+
+Cited by: §5.
+
+Chaganty et al. (2018)
+A. T. Chaganty, S. Mussman, and P. Liang
+
+The price of debiasing automatic metrics in natural language evaluation.
+
+arXiv preprint arXiv:1807.02202.
+
+Cited by: §3.2,
+§3.2,
+§5.
+
+Chatzi et al. (2024)
+I. Chatzi, E. Straitouri, S. Thejaswi, and M. G. Rodriguez
+
+Prediction-powered ranking of large language models.
+
+arXiv preprint arXiv:2402.17826.
+
+Cited by: §5.
+
+Chiang and Lee (2023)
+C. Chiang and H. Lee
+
+Can large language models be an alternative to human evaluations?.
+
+arXiv preprint arXiv:2305.01937.
+
+Cited by: §5.
+
+Chiang et al. (2024)
+W. Chiang, L. Zheng, Y. Sheng, A. N. Angelopoulos, T. Li, D. Li, H. Zhang, B. Zhu, M. Jordan, J. E. Gonzalez, et al.
+
+Chatbot arena: an open platform for evaluating llms by human preference.
+
+arXiv preprint arXiv:2403.04132.
+
+Cited by: §5.
+
+Dominguez-Olmedo et al. (2023)
+R. Dominguez-Olmedo, M. Hardt, and C. Mendler-Dünner
+
+Questioning the survey responses of large language models.
+
+arXiv preprint arXiv:2306.07951.
+
+Cited by: §5.
+
+Dorner and Hardt (2024)
+F. E. Dorner and M. Hardt
+
+Don’t label twice: quantity beats quality when comparing binary classifiers on a budget.
+
+In Forty-first International Conference on Machine Learning,
+
+Cited by: §B.1.
+
+Dorner et al. (2023)
+F. E. Dorner, M. Peychev, N. Konstantinov, N. Goel, E. Ash, and M. Vechev
+
+Human-guided fair classification for natural language processing.
+
+In The Eleventh International Conference on Learning Representations,
+
+Cited by: §5.
+
+Dubois et al. (2024a)
+Y. Dubois, B. Galambosi, P. Liang, and T. B. Hashimoto
+
+Length-controlled alpacaeval: a simple way to debias automatic evaluators.
+
+arXiv preprint arXiv:2404.04475.
+
+Cited by: §5.
+
+Dubois et al. (2024b)
+Y. Dubois, C. X. Li, R. Taori, T. Zhang, I. Gulrajani, J. Ba, C. Guestrin, P. S. Liang, and T. B. Hashimoto
+
+Alpacafarm: a simulation framework for methods that learn from human feedback.
+
+Advances in Neural Information Processing Systems 36.
+
+Cited by: §5.
+
+Fisch et al. (2024)
+A. Fisch, J. Maynez, R. A. Hofer, B. Dhingra, A. Globerson, and W. W. Cohen
+
+Stratified prediction-powered inference for hybrid language model evaluation.
+
+arXiv preprint arXiv:2406.04291.
+
+Cited by: §B.3,
+§5,
+§6.
+
+Fu et al. (2023)
+J. Fu, S. Ng, Z. Jiang, and P. Liu
+
+Gptscore: evaluate as you desire.
+
+arXiv preprint arXiv:2302.04166.
+
+Cited by: §5.
+
+Gilardi et al. (2023)
+F. Gilardi, M. Alizadeh, and M. Kubli
+
+ChatGPT outperforms crowd workers for text-annotation tasks.
+
+Proceedings of the National Academy of Sciences 120 (30), pp. e2305016120.
+
+Cited by: §5.
+
+Gneiting and Raftery (2007)
+T. Gneiting and A. E. Raftery
+
+Strictly proper scoring rules, prediction, and estimation.
+
+Journal of the American statistical Association 102 (477), pp. 359–378.
+
+Cited by: §C.4.
+
+Hendrycks et al. (2021)
+D. Hendrycks, C. Burns, S. Basart, A. Zou, M. Mazeika, D. Song, and J. Steinhardt
+
+Measuring massive multitask language understanding.
+
+In International Conference on Learning Representations,
+
+Cited by: §2.1,
+§3.7.
+
+Jung et al. (2024)
+J. Jung, F. Brahman, and Y. Choi
+
+Trust or escalate: llm judges with provable guarantees for human agreement.
+
+arXiv preprint arXiv:2407.18370.
+
+Cited by: §5.
+
+Koo et al. (2023)
+R. Koo, M. Lee, V. Raheja, J. I. Park, Z. M. Kim, and D. Kang
+
+Benchmarking cognitive biases in large language models as evaluators.
+
+arXiv preprint arXiv:2309.17012.
+
+Cited by: §5.
+
+Kumar et al. (2024)
+S. H. Kumar, S. Sahay, S. Mazumder, E. Okur, R. Manuvinakurike, N. Beckage, H. Su, H. Lee, and L. Nachman
+
+Decoding biases: automated methods and llm judges for gender bias detection in language models.
+
+arXiv preprint arXiv:2408.03907.
+
+Cited by: §5.
+
+Larsen and Marx (2005)
+R. J. Larsen and M. L. Marx
+
+An introduction to mathematical statistics.
+
+ Prentice Hall Hoboken, NJ.
+
+Cited by: §C.4.
+
+Lehmann and Casella (2006)
+E. L. Lehmann and G. Casella
+
+Theory of point estimation.
+
+ Springer Science & Business Media.
+
+Cited by: §C.1,
+Theorem 13.
+
+Li et al. (2024)
+T. Li, W. Chiang, E. Frick, L. Dunlap, T. Wu, B. Zhu, J. E. Gonzalez, and I. Stoica
+
+From crowdsourced data to high-quality benchmarks: arena-hard and benchbuilder pipeline.
+
+arXiv preprint arXiv:2406.11939.
+
+Cited by: §5.
+
+Liang et al. (2023)
+P. Liang, R. Bommasani, T. Lee, D. Tsipras, D. Soylu, M. Yasunaga, Y. Zhang, D. Narayanan, Y. Wu, A. Kumar, et al.
+
+Holistic evaluation of language models.
+
+Transactions on Machine Learning Research.
+
+Cited by: §B.2,
+Appendix B,
+§2.1,
+§3.7.
+
+Lin and Och (2004)
+C. Lin and F. Och
+
+Looking for a few good metrics: rouge and its evaluation.
+
+In Ntcir workshop,
+
+Cited by: §5.
+
+Liu et al. (2023)
+Y. Liu, N. S. Moosavi, and C. Lin
+
+Llms as narcissistic evaluators: when ego inflates evaluation scores.
+
+arXiv preprint arXiv:2311.09766.
+
+Cited by: §5.
+
+Mania et al. (2019)
+H. Mania, J. Miller, L. Schmidt, M. Hardt, and B. Recht
+
+Model similarity mitigates test set overuse.
+
+Advances in Neural Information Processing Systems 32.
+
+Cited by: §2.1.
+
+Mania and Sra (2020)
+H. Mania and S. Sra
+
+Why do classifier accuracies show linear trends under distribution shift?.
+
+arXiv preprint arXiv:2012.15483.
+
+Cited by: §2.1.
+
+Mazeika et al. (2024)
+M. Mazeika, L. Phan, X. Yin, A. Zou, Z. Wang, N. Mu, E. Sakhaee, N. Li, S. Basart, B. Li, et al.
+
+Harmbench: a standardized evaluation framework for automated red teaming and robust refusal.
+
+arXiv preprint arXiv:2402.04249.
+
+Cited by: §5.
+
+Ouyang et al. (2022)
+L. Ouyang, J. Wu, X. Jiang, D. Almeida, C. Wainwright, P. Mishkin, C. Zhang, S. Agarwal, K. Slama, A. Ray, et al.
+
+Training language models to follow instructions with human feedback.
+
+Advances in neural information processing systems 35, pp. 27730–27744.
+
+Cited by: §5.
+
+Panickssery et al. (2024)
+A. Panickssery, S. R. Bowman, and S. Feng
+
+Llm evaluators recognize and favor their own generations.
+
+arXiv preprint arXiv:2404.13076.
+
+Cited by: §5.
+
+Papineni et al. (2002)
+K. Papineni, S. Roukos, T. Ward, and W. Zhu
+
+Bleu: a method for automatic evaluation of machine translation.
+
+In Proceedings of the 40th annual meeting of the Association for Computational Linguistics,
+
+pp. 311–318.
+
+Cited by: §5.
+
+Raju et al. (2024)
+R. Raju, S. Jain, B. Li, J. Li, and U. Thakkar
+
+Constructing domain-specific evaluation sets for llm-as-a-judge.
+
+arXiv preprint arXiv:2408.08808.
+
+Cited by: §5.
+
+Saad-Falcon et al. (2023)
+J. Saad-Falcon, O. Khattab, C. Potts, and M. Zaharia
+
+Ares: an automated evaluation framework for retrieval-augmented generation systems.
+
+arXiv preprint arXiv:2311.09476.
+
+Cited by: §5.
+
+Salaudeen and Hardt (2024)
+O. Salaudeen and M. Hardt
+
+ImageNot: a contrast with imagenet preserves model rankings.
+
+arXiv preprint arXiv:2404.02112.
+
+Cited by: §2.1.
+
+Shi et al. (2024)
+L. Shi, W. Ma, and S. Vosoughi
+
+Judging the judges: a systematic investigation of position bias in pairwise comparative assessments by llms.
+
+arXiv preprint arXiv:2406.07791.
+
+Cited by: §5.
+
+Souly et al. (2024)
+A. Souly, Q. Lu, D. Bowen, T. Trinh, E. Hsieh, S. Pandey, P. Abbeel, J. Svegliato, S. Emmons, O. Watkins, et al.
+
+A strongreject for empty jailbreaks.
+
+arXiv preprint arXiv:2402.10260.
+
+Cited by: §5.
+
+Thakur et al. (2024)
+A. S. Thakur, K. Choudhary, V. S. Ramayapally, S. Vaidyanathan, and D. Hupkes
+
+Judging the judges: evaluating alignment and vulnerabilities in llms-as-judges.
+
+arXiv preprint arXiv:2406.12624.
+
+Cited by: §5.
+
+Tyser et al. (2024)
+K. Tyser, B. Segev, G. Longhitano, X. Zhang, Z. Meeks, J. Lee, U. Garg, N. Belsten, A. Shporer, M. Udell, et al.
+
+AI-driven review systems: evaluating llms in scalable and bias-aware academic reviews.
+
+arXiv preprint arXiv:2408.10365.
+
+Cited by: §5.
+
+Vu et al. (2024)
+T. Vu, K. Krishna, S. Alzubi, C. Tar, M. Faruqui, and Y. Sung
+
+Foundational autoraters: taming large language models for better automatic evaluation.
+
+arXiv preprint arXiv:2407.10817.
+
+Cited by: §5.
+
+Wang et al. (2023)
+P. Wang, L. Li, L. Chen, Z. Cai, D. Zhu, B. Lin, Y. Cao, Q. Liu, T. Liu, and Z. Sui
+
+Large language models are not fair evaluators.
+
+arXiv preprint arXiv:2305.17926.
+
+Cited by: §5.
+
+Wei et al. (2024)
+H. Wei, S. He, T. Xia, A. Wong, J. Lin, and M. Han
+
+Systematic evaluation of llm-as-a-judge in llm alignment tasks: explainable metrics and diverse prompt templates.
+
+arXiv preprint arXiv:2408.13006.
+
+Cited by: §5.
+
+Weyssow et al. (2024)
+M. Weyssow, A. Kamanda, and H. Sahraoui
+
+CodeUltraFeedback: an llm-as-a-judge dataset for aligning large language models to coding preferences.
+
+arXiv preprint arXiv:2403.09032.
+
+Cited by: §5.
+
+Yu et al. (2023)
+D. Yu, S. Kaur, A. Gupta, J. Brown-Cohen, A. Goyal, and S. Arora
+
+Skill-mix: a flexible and expandable family of evaluations for ai models.
+
+arXiv preprint arXiv:2310.17567.
+
+Cited by: §5.
+
+Zheng et al. (2024)
+L. Zheng, W. Chiang, Y. Sheng, S. Zhuang, Z. Wu, Y. Zhuang, Z. Lin, Z. Li, D. Li, E. Xing, et al.
+
+Judging llm-as-a-judge with mt-bench and chatbot arena.
+
+Advances in Neural Information Processing Systems 36.
+
+Cited by: Appendix B,
+§2.1,
+§3.7,
+§3.7,
+§5,
+§5.
+
+Appendix A Additional theoretical results
+
+A.1 Balanced agreement rate as an alternative
+
+Intuitively, high agreement fails to constrain the squared correlation  because predictors without any signal, such as constant predictors, can achieve high agreement. This is analogous to how accuracy can be misleading for imbalanced classification problems. In classification, this is solved by focusing on balanced accuracy instead. By analogy, we introduce the balanced agreement of  with  as
+
+ |
+ |
+ |
+
+The next theorem confirms that controlling  yields meaningful lower bounds on the squared correlation.
+
+Theorem 11.
+
+For any value of , we have:
+
+ |
+ |
+ |
+
+Theorem 11 is proven in Appendix C.5. It also provides another upper bound on sample efficiency gains from access to : Whenever  is close to half, access to  can not improve sample efficiency by much and the sample efficiency factor  is close to one. As a corollary, we show that whenever the proxy has reasonable balanced agreement, the minimum of the true positive rate  and true negative rate  upper bounds the squared correlation :
+
+Corollary 12.
+
+Whenever , we have
+
+ |
+ |
+ |
+
+Proof.
+
+Given ,  is maximized at the maximal value of . But given the constraint , that maximal value is . Inserting into Theorem 11 yields the result.
+∎
+
+Figure 5 shows the actual value of the maximal sample efficiency  and the corresponding lower and upper bounds derived from Theorem 11 for a variety of models. In line with our theoretical results,  lies consistently between the lower and upper bounds. Interestingly, the lower bound appears to be considerably tighter than the upper bound, that is,  is much closer to the lower bound than the upper bound throughout the experiments.
+
+Figure 5: Best possible sample efficiency factor  and lower/upper bounds based on the balanced agreement  for different judges (color) and evaluated models (x-ticks).
+
+A.2 Estimating the gap
+
+If ranking rather than accurately estimating model performance is the main goal, we need to estimate the difference  for model pairs . Because of potential cancelations, the difference of the optimal estimators for both terms  is not necessarily the optimal estimator for the difference. Correspondingly, further improvements can be made by jointly optimizing  and  to minimize the variance of . Solving the corresponding optimization problem yields:
+
+ |
+ |
+ |
+ |
+
+ |
+ |
+ |
+ |
+
+ |
+ |
+ |
+ |
+
+ |
+ |
+ |
+ |
+
+However, using different values of  for different comparisons means that there are multiple different score estimates for model  such that the resulting comparisons might not yield a valid transitive ranking.
+
+Appendix B Additional details on experiments
+
+For MMLU, we obtain most model predictions from the HELM (Liang et al., 2023) leaderboard and focus on the top 10 models11
+            1
+
+          Cutoff date: 23.07.2024. As HELM does not document model uncertainty, and results for LLama3.1-405b were initially not available, we evaluated LLama3.1-405b in bf16 using 8 A100 GPUs and the accelerate library for offloading, ourselves. We use the prompting format from HELM and extract the predicted probabilities  corresponding to the four tokens  that represent the answer options. For our uncertainty experiment, we renormalize them, setting .
+
+For MT-Bench, we use the results for six models released by the benchmark’s authors (Zheng et al., 2024). For each triple consisting of two different models ,  and a prompt  there is a varying number of human expert judgments, as well as a judgment by GPT-4. We aggregate the expert judgments using a majority vote, and discard all triples for which the experts tied, or GPT-4’s judgment amounts to a tie. We then calculate the win-rate for model  by averaging over all remaining triples that include . Note, that this is slightly different from the evaluation in the MT-Bench paper, where win-rates are calculated per model pair, and then averaged over models. MT-Bench also includes a follow-up prompt, with separate judgments for the first and second response. For simplicity, we focus on the first answer.
+
+B.1 High agreement is not necessary for ranking
+
+Proposition 2 indicates that a high agreement rate  is not sufficient for the proxy score  to yield similar model rankings as the real score . However, it turns out that high agreement is also not necessary for stable rankings: For binary classification with judge errors that are independent of the performance of different models, a sufficiently large sample size guarantees correct rankings as long as the error rate is below  (Dorner and Hardt, 2024). We demonstrate this phenomenon in Figure 6. In that experiment, the judge reproduces the correct label  of the time, but picks a random wrong label otherwise. Despite this judge’s low agreement with the correct labels, model rankings are preserved near-perfectly.
+
+Figure 6: Model rankings on MMLU using a 60% accurate judge with random errors. Ranks are preserved despite agreement substantially below LLM judges.
+
+B.2 Additional results on TruthfulQA
+
+Figure 7 shows additional results on TruthfulQA. As on MMLU, we extract model answers to the Q&A prompts from HELM22
+              2
+
+            We accessed the data on 14.11.2024, but it appears as if the leaderboard has not been updated to include recent models such as GPT-4. (Liang et al., 2023) and define the proxy score  using the judge’s answers  as described in Section 2. We use the top three models in the leaderboard as judges, and consider evaluations of these as well as some worse-performing models. As predicted by our theory, the sample efficiency factor  is consistently below two when weaker models are used to evaluate stronger ones. Beyond that, the sample efficiency factor  even stays below two when we use the strongest model we considered (Palmyra-x) to judge the weakest (LLama2-7b).
+
+Figure 7: Best possible sample efficiency factor  using different judges (colors) evaluating different models (x-ticks) on TruthfulQA. Error bars show  confidence intervals.
+
+B.3 Additional results on stratification
+
+We consider a debiasing method for more sophisticated sampling strategies, namely stratified PPI (Fisch et al., 2024). Note that efficiency improvements from stratification occur independently from the model-as-judge regime. In order to disentangle gains from stratification from the gains of (stratified) PPI (Fisch et al., 2024), we therefore focus on the per-stratum sample efficiency factor . Theorem 6 still holds per-stratum when applying stratified PPI, as long as the assumptions are valid for every stratum. It might however happen that the assumptions do not hold for every stratum, even if they are true globally: A judge model that is weaker than the evaluated model on average could still be stronger on certain strata, thus achieving a sample efficiency factor larger than two (on these strata).
+
+(a) GPT-4 judging Claude
+
+(b) GPT-4 judging LLama3.1-405b
+
+(c) Claude judging GPT-4
+
+(d) LLama3.1-405b judging GPT-4
+
+Figure 8: Per-stratum sample efficiency factor  on MMLU. The strata are the 57 MMLU subtasks, in alphabetical order.
+
+Figure 8 suggests that this might be rare in practice: It shows the per-stratum sample efficiency factors  on MMLU, using subtasks as strata. Using GPT-4 to judge the stronger Claude (Figure 8(a)) and LLama3.1-405b (Figure 8(b)), the sample efficiency factors  vary significantly across strata. They are larger for most strata than the total (non-stratified) sample efficiency factor.
+However they consistently stay below two. Even when using the stronger LLama3.1-405b (Figure 8(d)) and Claude (Figure 8(c)) to judge GPT-4, sample efficiency gains above two remain rare: We only observe them in 6 out of 57 (Claude) and 1 out of 57 (LLama) cases.
+
+Appendix C Proofs
+
+C.1 Theorem 5
+
+We use a multivariate version of the Cramér-Rao bound, as presented in Lehmann and Casella (2006):
+
+Theorem 13 (Lehmann and Casella, 2006, Theorem 6.6).
+
+Consider an experiment with parameter  for a product of open sets . Assume the likelihood  has the same support for all  and finite derivatives . Assume the Fisher information  is positive definite. Then for any statistic , we have . In particular, if  equals the -th component of , we have
+
+ |
+ |
+ |
+
+We again drop the dependence on  in order to declutter notation. We then use that the likelihoods of independent observations factor and the linearity of derivatives to obtain
+
+ |
+ |
+ |
+
+where  is the Fisher information for our experiment and  and  are the Fisher informations for a single  or a single  sample, respectively. Denoting the corresponding likelihoods  and  respectively, we have:
+
+ |
+ |
+ |
+ |
+
+ |
+ |
+ |
+ |
+
+ |
+ |
+ |
+ |
+
+ |
+ |
+ |
+ |
+
+ |
+ |
+ |
+ |
+
+ |
+ |
+ |
+ |
+
+Computing the Fisher information33
+              3
+
+            We used Sympy for automatic symbolic differentiation and simplification for the remainder of the proof.
+ yields
+
+ |
+ |
+ |
+ |
+
+ |
+ |
+ |
+ |
+
+ |
+ |
+ |
+ |
+
+ |
+ |
+ |
+ |
+
+ |
+ |
+ |
+ |
+
+ |
+ |
+ |
+ |
+
+ |
+ |
+ |
+ |
+
+In particular, this shows that the off-diagonal of  does not depend on . We can thus decompose , where  only includes the -dependent terms and is diagonal. The diagonal entries of  can all easily be identified as positive, showing that  is positive definite. At the same time,  is diagonalizable with eigenvalues  and , which is positive as the numerator is positive as a sum of squares and , while the denominator equals . Correspondingly,  is positive definite as the sum of a positive definite and a positive semi-definite matrix.
+
+With this, we can calculate
+
+ |
+ |
+ |
+ |
+
+ |
+ |
+ |
+ |
+
+ |
+ |
+ |
+ |
+
+ |
+ |
+ |
+ |
+
+ |
+ |
+ |
+ |
+
+ |
+ |
+ |
+ |
+
+ |
+ |
+ |
+ |
+
+C.2 Theorem 6
+
+Proof.
+
+To prove the theorem, we reparameterize to simplify the constraints, namely setting  and . For notational convenience, we also set . We then optimize the squared correlation  over the parameters in succession: At first, we take the derivative with respect to , finding two roots. Thus, the maximum of  with respect to  is either at one of these roots or the boundary values for . We consider each candidate separately, and optimize over  and  in a similar manner. This way, we enumerate all points  that are candidates for the global maximum, i.e. all such points that are feasible, and either hit the boundary of a constraint or have zero derivative respectively, in all of the three variables.
+
+We now delve into the details of the proof:
+Note that the agreement rate is given by . We therefore replace  and obtain a formula for  based on  and
+
+ |
+ |
+ |
+
+Maximizing in
+We then take the derivative with respect to  to obtain
+
+ |
+ |
+ |
+
+The numerator is quadratic in , so it has at most two zeros. These turn out to be at
+ and . We note, that there are singularities at  and . However, as , the first singularity occurs at a value of . Similarly, the second singularity can be seen to occur at , as  is equivalent to , which is true as  and . Correspondingly, the singularities do not introduce any discontinuities in  for . This means that for fixed  and   is either maximized at  or , or at the extreme values  or .
+
+Case 1:
+
+Inserting  turns the numerator of  to zero, such that .
+
+Case 2:
+
+We next analyze : While  and  are non-negative by assumption,  is negative. Correspondingly,  is not a valid value for  and the maximizer must be one of the other three values.
+
+Case 3:
+
+Next, inserting  yields
+
+ |
+ |
+ |
+
+For , this is clearly zero and we are done. Otherwise, we proceed as follows:
+
+Maximizing in
+We take the derivative with respect to  to obtain
+
+ |
+ |
+ |
+
+This is negative because  is positive while  is negative. Correspondingly, it is maximized at the smallest possible value of .
+Inserting  yields
+
+ |
+ |
+ |
+
+Maximizing in
+We take the derivative with respect to , obtaining
+
+ |
+ |
+ |
+
+This is zero at  and negative for larger , indicating a local maximum. We thus insert , obtaining
+
+ |
+ |
+ |
+
+Case 4:
+
+This leaves us with . We again insert, obtaining
+
+ |
+ |
+ |
+
+Maximizing in
+Taking the derivative with respect to  yields
+
+ |
+ |
+ |
+
+Note that this only has singularities at  and , both of which are ruled out by the constraint . The derivative is zero at  and negative for larger , indicating a local maximum. When , this value violates the constraint of , such that the maximum has to be at  or  instead.
+
+Local maximizing in
+We insert the local maximizer ,
+
+ |
+ |
+ |
+
+with positive derivative
+
+ |
+ |
+ |
+
+This means that the maximum value is at , where
+
+ |
+ |
+ |
+
+Boundary maximizing in
+We check the boundaries for , i.e., . First, we notice that for , . We thus focus on . Inserting yields
+
+ |
+ |
+ |
+
+with positive derivative
+
+ |
+ |
+ |
+
+Correspondingly, it is maximized for , where it clearly goes to . With this, the maximum attainable value for  equals .
+
+∎
+
+C.3 Proposition 9
+
+Proof.
+
+Consider the probabilities
+
+ |
+ |
+ |
+
+ |
+ |
+ |
+
+ |
+ |
+ |
+
+ |
+ |
+ |
+
+We then characterize the recalibrated proxy  and its relationship with the real score :  equals  whenever  and  whenever . This means that
+
+ |
+ |
+ |
+
+Plugging this into the definition of soft accuracy yields
+
+ |
+ |
+ |
+ |
+
+ |
+ |
+ |
+ |
+
+such that because  we have
+
+ |
+ |
+ |
+ |
+
+ |
+ |
+ |
+ |
+
+ |
+ |
+ |
+ |
+
+We now show that , splitting into the two cases  and .
+
+In the first case, we have that  and thus  and thus by assumption .
+With this,
+
+ |
+ |
+ |
+ |
+
+ |
+ |
+ |
+ |
+
+In the second case,  and thus , such that
+With this,
+
+ |
+ |
+ |
+ |
+
+ |
+ |
+ |
+ |
+
+Now, since  and  we always have , while by hypothesis . Correspondingly,
+
+ |
+ |
+ |
+
+∎
+
+C.4 Theorem 10
+
+Proof.
+
+First, we note that because the Mean squared error/Brier score is a proper scoring rule (Gneiting and Raftery, 2007), the Bayes-optimal predictor  minimizes the Mean squared error  for all post-processing functions . At the same time, we have that the squared correlation  falls monotonously in , where  is the affine transformation with the smallest value of  (Larsen and Marx, 2005). This means that the Bayes-optimal predictor  fulfills . As the Bayes-optimal predictor is calibrated, it is sufficient to prove our upper bound for calibrated scores  (i.e. scores  such that  for all ).
+
+In the following, we assume  to be calibrated. This means that
+
+ |
+ |
+ |
+
+where we use that because of calibration, conditional on a prediction ,  is one and the squared error is  with probability . Similarly, the squared error is  with probability .
+
+At the same time, the soft accuracy of  equals
+
+ |
+ |
+ |
+
+for calibrated scores , as  yields a score of  and happens with probability , and  happens with probability  and gets a score of .
+
+By the linearity of the integral, this implies that
+
+ |
+ |
+ |
+
+or
+
+ |
+ |
+ |
+
+As  is Bayes-optimal with respect to itself, the optimal affine transformation in terms of  is just the identity. Thus, we have that
+
+ |
+ |
+ |
+
+This is decreasing in  and thus maximized at the minimal value of , which equals  by assumption. Inserting yields
+
+ |
+ |
+ |
+
+This is increasing in  and thus maximized at , where we have
+
+ |
+ |
+ |
+
+∎
+
+C.5 Theorem 11
+
+Proof.
+
+We again drop the dependence on  for notational convenience.
+
+ |
+ |
+ |
+ |
+
+ |
+ |
+ |
+ |
+
+ |
+ |
+ |
+ |
+
+ |
+ |
+ |
+ |
+
+Clearly, this equals zero when .
+Fixing  and taking the derivative with respect to  yields
+
+ |
+ |
+ |
+
+Assuming  and , this is zero if and only if  is zero and clearly positive for larger . Correspondingly, as long as the singularities in  lie outside of the domain,
+is a unique minimum, while  is maximized either at the minimal or the maximal possible value of .
+
+We first insert the minimum, noting that for a lower bound we do not need to worry about whether this value  is indeed attainable. This yields
+
+ |
+ |
+ |
+
+as both denominator terms reduce to
+
+Next, we assume . As both  and  are in , we get that . Now, the singularities occur at  and , the first of which is smaller than , while the second is larger than . Correspondingly, we can ignore them and insert the minimal . We obtain
+
+ |
+ |
+ |
+
+and inserting , we obtain
+
+ |
+ |
+ |
+
+These two terms are symmetric in the sense that replacing  in the first term with  yields the second term and vice versa. Thus, it is sufficient to maximize the second term with respect to . We obtain
+
+ |
+ |
+ |
+
+which is negative such that  is maximized at , where it equals .
+
+Similarly, for ,  can range from  to . Again, the singularities are at  and . This time, the first one is negative, while the second one can easily be seen to be larger than . This again allows us to ignore the singularities. Inserting the extreme values yields  and , which again are the same after replacing  with . Taking the derivative of the first term with respect to  yields
+
+ |
+ |
+ |
+
+which is negative as . Correspondingly,  now maximizes , at which point it equals . Joining both cases, we thus obtain
+
+ |
+ |
+ |
+
+∎
+
+C.6 Proposition 1
+
+Proof.
+
+ |
+ |
+ |
+ |
+
+ |
+ |
+ |
+ |
+
+ |
+ |
+ |
+ |
+
+ |
+ |
+ |
+ |
+
+ |
+ |
+ |
+ |
+
+which is monotonously falling in .
+∎
+
+C.7 Proposition 2
+
+Proof.
+
+We again drop the dependence on .
+In the first case, we need that
+
+ |
+ |
+ |
+
+This is equivalent to
+
+ |
+ |
+ |
+
+or
+
+ |
+ |
+ |
+
+i.e. .
+With this, the constraint of  turns into . The left side is clearly continuous and monotonous in  and inserting the extreme values of zero and one, we obtain  and , such that we can find a solution for all intermediate values of .
+
+In the second case, we want
+
+ |
+ |
+ |
+
+We simplify to get
+
+ |
+ |
+ |
+
+or equivalently
+
+ |
+ |
+ |
+
+or
+
+ |
+ |
+ |
+
+which is achieved at . In that case, the constraint of  turns into  with extreme values again lying at  and .
+∎
+
+C.8 Proposition 4
+
+Proof.
+
+We first note that  and  as both  and  are binary. Furthermore, , such that . With this, it is easy to see that the formula for  in the proposition statement is indeed correct.
+
+We then note, that for fixed values of  and , the relative variance reduction of  compared to  is determined by the squared Pearson correlation coefficient  between the ground truth labels  and model judgements :
+
+ |
+ |
+ |
+
+Using the definition of , this yields
+
+ |
+ |
+ |
+
+Finally, we take the limit of  for an upper bound.
+∎
+
+C.9 Proposition 8
+
+Proof.
+
+We drop the parameters’ dependence on  and set  and . Then  At the same time, as there is no judge bias, , such that . Lastly , which can attain any value between  and .
+∎
